@@ -1,0 +1,2 @@
+# Optional: real Keras autoencoder (without it the autoencoder falls back to an sklearn MLP)
+tensorflow-cpu>=2.16

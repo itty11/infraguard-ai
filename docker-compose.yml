@@ -1,0 +1,56 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: infraguard
+      POSTGRES_PASSWORD: infraguard
+      POSTGRES_DB: infraguard
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U infraguard"]
+      interval: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      args:
+        INSTALL_TF: "false"   # set "true" to train the Keras autoencoder inside the image
+    env_file: [{path: .env, required: false}]
+    environment:
+      DATABASE_URL: postgresql+psycopg2://infraguard:infraguard@db:5432/infraguard
+    depends_on:
+      db: {condition: service_healthy}
+    ports: ["8000:8000"]
+    volumes: [artifacts:/app/artifacts]
+    # first start: simulate data, train, evaluate; later starts reuse the saved model
+    command: >
+      sh -c "[ -f artifacts/bundle.joblib ] || (python scripts/generate_data.py && python scripts/train.py && python scripts/evaluate.py);
+             uvicorn infraguard.api:app --host 0.0.0.0 --port 8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      retries: 30
+      start_period: 120s
+
+  dashboard:
+    build: .
+    environment:
+      API_URL: http://api:8000
+    depends_on:
+      api: {condition: service_healthy}
+    ports: ["8501:8501"]
+    command: streamlit run dashboard/app.py --server.port 8501 --server.address 0.0.0.0
+
+  simulator:            # optional live demo: docker compose --profile demo up
+    build: .
+    profiles: [demo]
+    environment:
+      API_URL: http://api:8000
+    depends_on:
+      api: {condition: service_healthy}
+    command: python scripts/stream_simulator.py --hours 12 --delay 1
+
+volumes:
+  pgdata:
+  artifacts:
