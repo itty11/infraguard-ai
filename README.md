@@ -1,5 +1,7 @@
 # InfraGuard AI
 
+![CI](https://github.com/ittyavira/infraguard-ai/actions/workflows/ci.yml/badge.svg)
+
 AI-powered infrastructure monitoring and anomaly detection (AIOps MVP): a telemetry simulator,
 multivariate anomaly detection, incident grouping, a RAG troubleshooting assistant, a FastAPI backend and a
 Streamlit dashboard. Everything runs on a laptop (CPU only).
@@ -27,9 +29,9 @@ parsing (only error/connection-failure counts are used). Treat them as future wo
 ## Quick start (local)
 
 ```bash
-python -m venv .venv && source .venv/bin/activate
+python -m venv .venv && source .venv/bin/activate      # Windows PowerShell: .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-pip install -r requirements-dl.txt          # optional: real Keras autoencoder
+pip install -r requirements-dl.txt          # optional: real Keras autoencoder (Windows: enable long paths first)
 export PYTHONPATH=src                        # Windows PowerShell: $env:PYTHONPATH="src"
 
 python scripts/generate_data.py              # train/val (normal) + test (labelled anomalies)
@@ -61,14 +63,14 @@ and trains the model inside the API container.
 Set `API_KEY` to require an `X-API-Key` header. Set `ANTHROPIC_API_KEY` for LLM-written answers
 (`LLM_MODEL` configurable); without it the assistant returns an extractive answer built only from retrieved runbooks.
 
-## Results from the included simulator (4 days x 4 servers, 51 injected events)
+## Results from the included simulator (4 days x 4 servers, 51 injected events, default seeds)
 
 | Model | Event precision | Event recall | False alerts / day / server | Median detection latency (min) | Grouping ARI |
 |---|---|---|---|---|---|
 | Static thresholds (CPU/mem >90%, latency >200 ms, loss >5%) | 1.00 | 0.26 | 0.00 | 4 | 0.03 |
 | Hour-of-day z-score baseline | 0.96 | 1.00 | 0.13 | 2 | 0.67 |
 | Isolation Forest | 0.90 | 0.94 | 0.38 | 2 | 0.16 |
-| Autoencoder (Keras) | 0.96 | 1.00 | 0.13 | 2 | 0.51 |
+| Autoencoder (Keras) | 0.96 | 1.00 | 0.13 | 2 | 0.52 |
 
 Honest reading: fixed thresholds miss ~3 of 4 events; the simple workload-aware baseline is very strong on this
 simulator; Isolation Forest is the weakest here and fragments some incidents (low ARI). Numbers vary with seeds
@@ -87,6 +89,10 @@ and will differ on real data. Re-run `scripts/evaluate.py` for your own figures.
 
 ## Verified vs. not verified
 
-Run and passing in development (Python 3.12, pandas 3.0, scikit-learn 1.9, TensorFlow 2.21, SQLite): data generation,
-training, evaluation, the 12 unit/API tests, live ingestion through the API, the assistant (extractive mode), and the
-dashboard (Streamlit AppTest). **Not run:** the Docker images / PostgreSQL path, `sbert` embeddings, and LLM mode.
+Run and passing on Windows (Python 3.11, pandas 3.1, scikit-learn 1.9, TensorFlow 2.21, SQLite): data generation,
+training, evaluation (results above reproduced on a second machine), the 13 unit/API tests, live ingestion through
+the API and the Streamlit dashboard (overview, anomaly timeline, incidents). The assistant is covered by an API test
+in extractive mode. CI runs the test suite on every push (Linux, Python 3.11, without TensorFlow).
+**Not run:** the Docker images / PostgreSQL path, `sbert` embeddings, and LLM mode.
+
+Dashboard timestamps are UTC.
