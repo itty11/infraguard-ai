@@ -1,6 +1,6 @@
 # InfraGuard AI
 
-![CI](https://github.com/ittyavira/infraguard-ai/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/itty11/infraguard-ai/actions/workflows/ci.yml/badge.svg)
 
 AI-powered infrastructure monitoring and anomaly detection (AIOps MVP): a telemetry simulator,
 multivariate anomaly detection, incident grouping, a RAG troubleshooting assistant, a FastAPI backend and a
