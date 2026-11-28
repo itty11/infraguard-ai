@@ -10,6 +10,19 @@ Streamlit dashboard. Everything runs on a laptop (CPU only).
 > synthetic data; they are **not** measurements from a real environment. Detection is not root-cause analysis:
 > every incident carries a *hypothesis*, never a confirmed cause.
 
+## Screenshots
+
+| Overview | Metrics
+|---|---|
+| ![Overview](screenshots_outputs_recordings/overview.png) | ![Metrics](screenshots_outputs_recordings/metrics.png)
+| ![**Anomaly timeline and incident spans**](screenshots_outputs_recordings/timeline.png) | ![**Incidents**](screenshots_outputs_recordings/incidents.png) |
+| ![Timeline](screenshots_outputs_recordings/timeline.png) | ![Incidents](screenshots_outputs_recordings/incidents.png) |
+
+![Model performance](screenshots_outputs_recordings/model-performance.png)
+
+*Dashboard on simulated telemetry: server health, per-server metrics, flagged samples grouped into severity-rated
+incidents, and the detector comparison on the labelled test set.*
+
 ## What is implemented (mapped to the plan)
 
 | Plan layer | Where | Notes |
@@ -26,6 +39,16 @@ Streamlit dashboard. Everything runs on a laptop (CPU only).
 
 **Not implemented (diagram extras):** SNMP collection, CMDB/impact analysis, ticketing, auto-remediation, real log
 parsing (only error/connection-failure counts are used). Treat them as future work.
+
+## How incidents work
+
+Detectors score every sample. Flags must persist for 3 samples to count, and flagged runs separated by 12 minutes or
+less are merged into one incident (`MIN_CONSECUTIVE`, `MERGE_GAP` in `config.py`). Each incident records the abnormal
+metrics, whether each moved suddenly or gradually, a rule-based severity (LOW/MEDIUM/HIGH from metric count, distance
+from normal and duration), and a *hypothesis* with a suggested action. An incident stays **open** until 12 minutes pass
+without new flags, so a server can still show an open incident just after its metrics look normal again. Incidents only
+ever gain severity and metrics as the detection window slides. A detection with no single clearly abnormal metric is
+capped at LOW and labelled low confidence.
 
 ## Quick start (local)
 
@@ -46,8 +69,18 @@ streamlit run dashboard/app.py               # terminal 3  -> http://localhost:8
 pytest -q                                    # tests
 ```
 
-Docker: `docker compose up --build` (add `--profile demo` for the live stream). The first start simulates data
-and trains the model inside the API container.
+### Docker (PostgreSQL + API + dashboard)
+
+```bash
+docker compose up --build            # first start simulates data, trains and evaluates inside the API container
+python scripts/stream_simulator.py   # feed telemetry (export API_KEY in your shell if .env defines one)
+# dashboard: http://localhost:8501    API docs: http://localhost:8000/docs
+docker compose down                  # stop (data kept); add -v to wipe the database and the trained model
+```
+
+The image has no TensorFlow, so the autoencoder uses the sklearn fallback (build with `INSTALL_TF: "true"` for Keras).
+Trained bundles are not portable between environments, which is why `artifacts/` is excluded from the image
+(`.dockerignore`): retrain where you deploy.
 
 ## API
 
@@ -140,12 +173,13 @@ cut-off. LLM mode is implemented but **not yet measured**: run `python scripts/e
 
 ## Verified vs. not verified
 
-Run and passing on Windows (Python 3.11, pandas 3.1, scikit-learn 1.9, TensorFlow 2.21, SQLite): data generation,
-training, evaluation, the unit/API test suite, live ingestion through the API and the Streamlit dashboard. The suite
-also passes against a native PostgreSQL 16 install (17/17 tests; set `TEST_DATABASE_URL`). CI runs the suite on SQLite
-and on a PostgreSQL service container, and builds and starts the Docker stack as a smoke test.
-**Not yet verified by the author:** the Docker images end to end on a local machine (the CI smoke job covers this once
-it is green), `sbert` embeddings, and LLM mode.
+Run and passing on Windows (Python 3.11, TensorFlow 2.21): data generation, training, evaluation, the 18-test unit/API
+suite, and the Streamlit dashboard. The Docker Compose stack (PostgreSQL 16, API, dashboard) was run end to end on
+Windows (Docker 29.9.3, Compose v5.7.1): telemetry streamed through the API produced incidents stored in PostgreSQL and
+shown in the dashboard. The test suite also passes against a PostgreSQL 16 server (`TEST_DATABASE_URL`), and CI runs it
+on SQLite and PostgreSQL plus a Docker smoke test.
+**Not yet verified:** `sbert` embeddings and LLM mode (implemented, not measured). Real-data numbers below were produced
+with the sklearn autoencoder fallback; rerun `scripts/evaluate_smd.py` locally to reproduce them with Keras.
 
 Dashboard timestamps are UTC.
 
