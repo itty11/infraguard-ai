@@ -12,10 +12,10 @@ Streamlit dashboard. Everything runs on a laptop (CPU only).
 
 ## Screenshots
 
-| Overview | Metrics
+| Overview | Metrics |
 |---|---|
-| ![Overview](screenshots_outputs_recordings/overview.png) | ![Metrics](screenshots_outputs_recordings/metrics.png)
-| ![**Anomaly timeline and incident spans**](screenshots_outputs_recordings/timeline.png) | ![**Incidents**](screenshots_outputs_recordings/incidents.png) |
+| ![Overview](screenshots_outputs_recordings/overview.png) | ![Metrics](screenshots_outputs_recordings/metrics.png) |
+| **Anomaly timeline and incident spans** | **Incidents** |
 | ![Timeline](screenshots_outputs_recordings/timeline.png) | ![Incidents](screenshots_outputs_recordings/incidents.png) |
 
 ![Model performance](screenshots_outputs_recordings/model-performance.png)
