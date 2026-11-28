@@ -3,8 +3,9 @@ on:
   push:
     branches: [main]
   pull_request:
+
 jobs:
-  test:
+  test:                       # fast: SQLite, no TensorFlow
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -16,3 +17,44 @@ jobs:
       - run: pytest -q
         env:
           PYTHONPATH: src
+
+  test-postgres:              # same suite against a real PostgreSQL service container
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: infraguard
+          POSTGRES_PASSWORD: infraguard
+          POSTGRES_DB: infraguard_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U infraguard"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: pytest -q
+        env:
+          PYTHONPATH: src
+          TEST_DATABASE_URL: postgresql+psycopg2://infraguard:infraguard@localhost:5432/infraguard_test
+
+  docker-smoke:               # builds the images, starts the full stack, checks both health endpoints
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose up -d --build --wait --wait-timeout 900
+      - run: curl -fsS http://localhost:8000/health
+      - run: curl -fsS http://localhost:8501/_stcore/health
+      - name: Show logs on failure
+        if: failure()
+        run: docker compose logs --tail 100
+      - run: docker compose down -v
+        if: always()

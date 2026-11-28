@@ -35,6 +35,7 @@ services:
 
   dashboard:
     build: .
+    env_file: [{path: .env, required: false}]
     environment:
       API_URL: http://api:8000
     depends_on:
@@ -45,6 +46,7 @@ services:
   simulator:            # optional live demo: docker compose --profile demo up
     build: .
     profiles: [demo]
+    env_file: [{path: .env, required: false}]
     environment:
       API_URL: http://api:8000
     depends_on:

@@ -94,6 +94,10 @@ class AutoencoderDetector:
         return self
 
     def score(self, X: np.ndarray) -> np.ndarray:
+        if self.model_ is None:
+            raise RuntimeError(
+                "This bundle's autoencoder was trained with TensorFlow/Keras, which is not installed here. "
+                "Install requirements-dl.txt, or retrain in this environment (python scripts/train.py).")
         recon = self.model_.predict(X, verbose=0) if self.backend_ == "keras" else self.model_.predict(X)
         return np.mean((X - recon) ** 2, axis=1)
 
@@ -112,6 +116,9 @@ class AutoencoderDetector:
         self.__dict__.update(state)
         if state.get("backend_") == "keras":
             keras = self._keras()
+            if keras is None:          # bundle trained with Keras, but TensorFlow is missing in this environment
+                self.model_ = None     # other detectors keep working; scoring with this one raises a clear error
+                return
             with tempfile.TemporaryDirectory() as d:
                 p = os.path.join(d, "ae.keras")
                 with open(p, "wb") as fh:

@@ -11,11 +11,12 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction.text import CountVectorizer, TfidfVectorizer
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from .config import (BASE_METRICS, EMBEDDING_BACKEND, EMBEDDING_MODEL, KB_DIR, LLM_MODEL, RAG_MIN_SCORE)
+from .config import (BASE_METRICS, EMBEDDING_BACKEND, EMBEDDING_MODEL, KB_DIR, LLM_MODEL,
+                     OFF_TOPIC_MIN_COVERAGE, RAG_MIN_SCORE)
 from .correlation import JOINT_HYPOTHESIS
 from .db import Incident, Telemetry
 
@@ -39,6 +40,10 @@ def load_chunks(kb_dir: Path = KB_DIR) -> list[dict]:
     return chunks
 
 
+def _stem(word: str) -> str:
+    return re.sub(r"(ing|ed|es|s)$", "", word) if len(word) > 4 else word
+
+
 class KnowledgeBase:
     def __init__(self, kb_dir: Path = KB_DIR, backend: str = EMBEDDING_BACKEND):
         self.chunks = load_chunks(kb_dir)
@@ -51,15 +56,42 @@ class KnowledgeBase:
         else:
             self._tfidf = TfidfVectorizer(ngram_range=(1, 2), sublinear_tf=True, stop_words="english")
             vecs = self._tfidf.fit_transform(docs).toarray()
+        cv = CountVectorizer(stop_words="english").fit(docs)       # vocabulary for the off-topic check
+        self._analyzer, self._vocab = cv.build_analyzer(), {_stem(w) for w in cv.vocabulary_}
         self.vecs = np.ascontiguousarray(vecs, dtype="float32")
         if faiss is not None:
             self.index = faiss.IndexFlatIP(self.vecs.shape[1])   # cosine (vectors are L2-normalised)
             self.index.add(self.vecs)
 
+    def coverage(self, question: str) -> float:
+        """Share of the question's content words that occur anywhere in the runbooks (0..1)."""
+        toks = [_stem(t) for t in self._analyzer(question)]
+        return sum(t in self._vocab for t in toks) / len(toks) if toks else 0.0
+
     def _embed(self, q: str) -> np.ndarray:
         v = self._st.encode([q], normalize_embeddings=True) if self.backend == "sbert" \
             else self._tfidf.transform([q]).toarray()
         return np.ascontiguousarray(v, dtype="float32")
+
+    def with_steps(self, hits: list[dict], max_docs: int = 2) -> list[dict]:
+        """Ensure the top runbooks' 'Investigation steps' sections are included (placed right after the doc's first hit)."""
+        top_docs = list(dict.fromkeys(h["doc"] for h in hits))[:max_docs]
+        have, out, added = {h["id"] for h in hits}, [], set()
+        for h in hits:
+            out.append(h)
+            if h["doc"] in top_docs and h["doc"] not in added:
+                added.add(h["doc"])
+                for c in self.chunks:
+                    if c["doc"] == h["doc"] and "investigation" in c["section"].lower() and c["id"] not in have:
+                        out.append({**c, "score": h["score"]})
+        return out
+
+    def search_fused(self, queries: list[tuple[str, float]], k: int = 4) -> list[dict]:
+        """Weighted fusion of several queries: score = sum(w * cosine) / sum(w) over all chunks."""
+        total = sum(w for _, w in queries)
+        sims = sum(w * (self.vecs @ self._embed(q)[0]) for q, w in queries) / total
+        ids = np.argsort(-sims)[:min(k, len(self.chunks))]
+        return [{**self.chunks[i], "score": float(sims[i])} for i in ids]
 
     def search(self, query: str, k: int = 4) -> list[dict]:
         q = self._embed(query)
@@ -149,15 +181,38 @@ def _llm_answer(question: str, inc: Incident, evidence: list[str], hits: list[di
     return "".join(b.text for b in msg.content if b.type == "text")
 
 
+INCIDENT_WORDS = re.compile(r"\b(server|incident|alert|anomal\w*|inc-?\d+)\b", re.I)
+
+
+def is_off_topic(kb: KnowledgeBase, question: str) -> bool:
+    """True if the question neither refers to an incident/server nor resembles the runbooks.
+
+    Lexical heuristic: too few of its content words appear in the knowledge base, or the best retrieval score
+    is negligible. Semantic embeddings or an LLM classifier would be more robust for near-miss questions.
+    """
+    if INCIDENT_WORDS.search(question):
+        return False
+    if kb.coverage(question) < OFF_TOPIC_MIN_COVERAGE:
+        return True
+    hits = kb.search(question, k=1)
+    return not hits or hits[0]["score"] < RAG_MIN_SCORE
+
+
 def answer(session: Session, kb: KnowledgeBase, question: str, server_id: str | None = None,
            incident_id: int | None = None) -> dict:
+    if incident_id is None and server_id is None and is_off_topic(kb, question):
+        return {"answer": "The available documentation does not cover this question. I can explain recorded "
+                          "infrastructure incidents and suggest steps from the runbooks.",
+                "incident_id": None, "sources": [], "low_confidence": True, "mode": "insufficient_docs"}
     inc = _resolve_incident(session, question, server_id, incident_id)
     if inc is None:
         return {"answer": "No matching incident has been recorded yet, so there is nothing to explain.",
                 "incident_id": None, "sources": [], "low_confidence": True, "mode": "none"}
     evidence, max_change = _telemetry_evidence(session, inc)
-    query = f"{question} {inc.hypothesis} " + " ".join(inc.anomalous_metrics or [])
-    hits = kb.search(query, k=4)
+    # Incident evidence (hypothesis + metric names as words) outweighs the question text: generic words such as
+    # "investigation steps" appear in every runbook and would otherwise swamp the retrieval.
+    incident_query = f"{inc.hypothesis} " + " ".join(m.replace("_", " ") for m in inc.anomalous_metrics or [])
+    hits = kb.with_steps(kb.search_fused([(incident_query, 2.0), (question, 1.0)], k=4))
     low = not hits or hits[0]["score"] < RAG_MIN_SCORE
     sources = [{"id": h["id"], "doc": h["doc"], "section": h["section"], "score": round(h["score"], 3)} for h in hits]
     if low:

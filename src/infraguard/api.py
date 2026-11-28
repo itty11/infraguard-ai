@@ -24,6 +24,11 @@ async def lifespan(app: FastAPI):
     init_db()
     if (ARTIFACT_DIR / "bundle.joblib").exists():
         STATE["bundle"] = DetectorBundle.load(ARTIFACT_DIR)
+        ae = STATE["bundle"].models.get("autoencoder")
+        if ae is not None and ae.model_ is None:
+            if ACTIVE_MODEL == "autoencoder":
+                raise RuntimeError("ACTIVE_MODEL=autoencoder but this bundle needs TensorFlow, which is not installed")
+            print("warning: autoencoder unavailable (bundle trained with TensorFlow); other detectors still work")
     try:
         STATE["kb"] = rag.KnowledgeBase()
     except Exception as exc:  # keep the API up even if the KB is missing

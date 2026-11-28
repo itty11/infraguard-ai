@@ -38,6 +38,7 @@ export PYTHONPATH=src                        # Windows PowerShell: $env:PYTHONPA
 python scripts/generate_data.py              # train/val (normal) + test (labelled anomalies)
 python scripts/train.py                      # trains on normal data, sets thresholds on normal validation data
 python scripts/evaluate.py                   # compares all detectors, writes artifacts/eval_report.json
+python scripts/evaluate_assistant.py         # assistant test set (retrieval + answer behaviour); --mode both for LLM
 
 uvicorn infraguard.api:app --reload          # terminal 1  -> http://localhost:8000/docs
 python scripts/stream_simulator.py           # terminal 2  -> replays telemetry with injected anomalies
@@ -105,6 +106,27 @@ the deep model does not beat linear baselines. SMD has no timestamps or incident
 grouping metrics do not apply, and its 38 columns are unnamed. Metrics are strict event-level (no point-adjustment),
 so they are not comparable to point-adjusted F1 scores quoted in papers. Do not tune on the test half.
 
+## Assistant evaluation (30 questions)
+
+`data/assistant_eval/questions.jsonl` holds 30 questions: 10 retrieval, 12 incident, and 8 honesty/safety cases
+(root-cause overclaiming, unknown server, off-topic, prompt injection, secret requests). `scripts/evaluate_assistant.py`
+pushes a controlled scenario (one known fault type per server) through the real ingest and detection pipeline into a
+temporary database, then scores answers with rule-based checks: right runbook cited, valid `[KBn]` citations,
+hypothesis wording, before/during numbers, "no incident" and "documentation insufficient" handling, forbidden phrases.
+
+| Measure (TF-IDF + FAISS, extractive answers, no LLM) | Result |
+|---|---|
+| Retrieval recall@1 / recall@3 / MRR@3 (10 questions) | 0.80 / 1.00 / 0.88 |
+| Answer-behaviour checks passed (20 questions) | 20 / 20 |
+| Citation validity (cited ids are retrieved sources) | 100% |
+
+Caveats: the question set was also used while fixing the assistant (query construction, investigation-step
+inclusion, off-topic gate), so these figures are development-set results and are optimistic; extend the set with unseen
+questions before quoting them. The off-topic gate is a lexical heuristic (share of question words found in the runbooks,
+`OFF_TOPIC_MIN_COVERAGE`) calibrated on a small set; a near-miss such as a database-deadlock question sits close to the
+cut-off. LLM mode is implemented but **not yet measured**: run `python scripts/evaluate_assistant.py --mode both` with
+`ANTHROPIC_API_KEY` set to compare it with the extractive baseline.
+
 ## Known limitations / next steps
 
 1. **Synthetic results are optimistic.** The simulator was written by the same author as the detectors; SMD above is
@@ -119,9 +141,15 @@ so they are not comparable to point-adjusted F1 scores quoted in papers. Do not 
 ## Verified vs. not verified
 
 Run and passing on Windows (Python 3.11, pandas 3.1, scikit-learn 1.9, TensorFlow 2.21, SQLite): data generation,
-training, evaluation (results above reproduced on a second machine), the 16 unit/API tests, live ingestion through
-the API and the Streamlit dashboard (overview, anomaly timeline, incidents). The assistant is covered by an API test
-in extractive mode. CI runs the test suite on every push (Linux, Python 3.11, without TensorFlow).
-**Not run:** the Docker images / PostgreSQL path, `sbert` embeddings, and LLM mode.
+training, evaluation, the unit/API test suite, live ingestion through the API and the Streamlit dashboard. The suite
+also passes against a native PostgreSQL 16 install (17/17 tests; set `TEST_DATABASE_URL`). CI runs the suite on SQLite
+and on a PostgreSQL service container, and builds and starts the Docker stack as a smoke test.
+**Not yet verified by the author:** the Docker images end to end on a local machine (the CI smoke job covers this once
+it is green), `sbert` embeddings, and LLM mode.
 
 Dashboard timestamps are UTC.
+
+## License and data
+
+Code: MIT (see `LICENSE`). Real-data evaluation uses the Server Machine Dataset (Su et al., "Robust Anomaly Detection
+for Multivariate Time Series through Stochastic Recurrent Neural Network", KDD 2019), MIT-licensed, not redistributed here.

@@ -99,3 +99,25 @@ def test_assistant_warns_when_evidence_is_weak():
     strong = _extractive_answer(inc, ["latency: 20 -> 80 (+300%)"], hits, max_change=3.0)
     assert "weak evidence" in weak and "6%" in weak
     assert "weak evidence" not in strong
+
+
+def test_off_topic_questions_are_not_answered_from_an_incident():
+    from infraguard.rag import is_off_topic
+    kb = KnowledgeBase()
+    assert is_off_topic(kb, "What is the capital of France?")
+    assert is_off_topic(kb, "Write me a poem about summer")
+    assert is_off_topic(kb, "How do I fix a database deadlock?")
+    assert not is_off_topic(kb, "Why is Server 02 experiencing high latency?")
+    assert not is_off_topic(kb, "memory usage keeps growing over hours")
+    assert not is_off_topic(kb, "what does packet loss mean")
+
+
+def test_keras_trained_bundle_loads_without_tensorflow(monkeypatch):
+    """A bundle trained on a machine with TensorFlow must still load where TensorFlow is missing."""
+    import pytest
+    from infraguard.models import AutoencoderDetector
+    monkeypatch.setattr(AutoencoderDetector, "_keras", staticmethod(lambda: None))
+    ae = AutoencoderDetector.__new__(AutoencoderDetector)
+    ae.__setstate__({"backend_": "keras", "model_": b"serialised keras model", "epochs": 1})
+    with pytest.raises(RuntimeError, match="TensorFlow"):
+        ae.score(np.zeros((2, 3)))

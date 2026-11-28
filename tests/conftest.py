@@ -8,7 +8,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 _TMP = tempfile.mkdtemp(prefix="infraguard_test_")
-os.environ["DATABASE_URL"] = f"sqlite:///{_TMP}/test.db"
+# set TEST_DATABASE_URL (e.g. postgresql+psycopg2://user:pw@localhost:5432/db) to run the suite on PostgreSQL
+os.environ["DATABASE_URL"] = os.getenv("TEST_DATABASE_URL") or f"sqlite:///{_TMP}/test.db"
 os.environ["ARTIFACT_DIR"] = f"{_TMP}/artifacts"
 os.environ.pop("ANTHROPIC_API_KEY", None)
 os.environ.pop("API_KEY", None)

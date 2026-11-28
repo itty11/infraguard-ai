@@ -17,6 +17,9 @@ EMBEDDING_BACKEND = os.getenv("EMBEDDING_BACKEND", "tfidf")  # tfidf | sbert
 EMBEDDING_MODEL = os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
 LLM_MODEL = os.getenv("LLM_MODEL", "claude-sonnet-5-5")  # used only if ANTHROPIC_API_KEY is set
 RAG_MIN_SCORE = float(os.getenv("RAG_MIN_SCORE", "0.08"))  # below this => "insufficient documentation"
+# share of a question's content words that must appear somewhere in the runbooks; lower => off-topic.
+# Heuristic calibrated on a small question set (see data/assistant_eval); recalibrate if you change the KB or backend.
+OFF_TOPIC_MIN_COVERAGE = float(os.getenv("OFF_TOPIC_MIN_COVERAGE", "0.7"))
 
 # --- Telemetry schema (one schema used everywhere) --------------------------
 SERVERS = [f"SERVER_{i:02d}" for i in range(1, 5)]
