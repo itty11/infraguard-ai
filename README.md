@@ -21,6 +21,7 @@ Streamlit dashboard. Everything runs on a laptop (CPU only).
 | 5 AI assistant | `rag.py` | FAISS retrieval over `data/knowledge_base/*.md`, telemetry evidence, citations, "insufficient docs" fallback, optional LLM |
 | 6 Backend | `api.py`, `db.py`, `service.py` | FastAPI + SQLAlchemy (PostgreSQL in Docker, SQLite locally) |
 | 7 Dashboard | `dashboard/app.py` | overview, charts, anomaly timeline, incidents, assistant, model performance |
+| Real-data evaluation | `scripts/evaluate_smd.py` | Server Machine Dataset (SMD): 28 real machines, event-based metrics |
 | Evaluation | `evaluation.py`, `scripts/evaluate.py` | event-based precision/recall/F1, false alerts/day, detection latency, grouping ARI, alert reduction |
 
 **Not implemented (diagram extras):** SNMP collection, CMDB/impact analysis, ticketing, auto-remediation, real log
@@ -76,10 +77,38 @@ Honest reading: fixed thresholds miss ~3 of 4 events; the simple workload-aware 
 simulator; Isolation Forest is the weakest here and fragments some incidents (low ARI). Numbers vary with seeds
 and will differ on real data. Re-run `scripts/evaluate.py` for your own figures.
 
+## Real-data evaluation: Server Machine Dataset (SMD)
+
+SMD (Su et al., KDD 2019) has 28 real server machines x 38 metrics (1-minute samples) with labelled anomaly segments;
+the dataset is MIT-licensed. Setup and run:
+
+```bash
+git clone --depth 1 https://github.com/NetManAIOps/OmniAnomaly.git data/external/OmniAnomaly
+python scripts/evaluate_smd.py --quick      # 4 machines
+python scripts/evaluate_smd.py              # all 28 machines (writes artifacts/smd_report.json)
+```
+
+Protocol per machine: fit on the first 80% of the train half, set each threshold from the last 20% (99.5th percentile
+of scores, chronological), then score the untouched test half. Events are runs of consecutive labelled samples;
+alerts must persist >= 3 samples; an alert counts if it overlaps a true event (+/- 5 min). 327 true events in total.
+
+| Detector | Event precision | Event recall | Event F1 | False alerts / machine-day | Median detection latency (min) |
+|---|---|---|---|---|---|
+| Global z-score (max abs deviation) | 0.31 | 0.59 | 0.40 | 1.25 | 2 |
+| PCA reconstruction error | 0.22 | 0.73 | 0.34 | 2.24 | 2 |
+| Isolation Forest | 0.14 | 0.39 | 0.21 | 2.09 | 2 |
+| Autoencoder (sklearn MLP in this run) | 0.23 | 0.63 | 0.34 | 1.66 | 2 |
+
+Honest reading: real data is much harder than the simulator. Every detector produces roughly 1-2 false alerts per
+machine per day and none is precise. The simple z-score baseline is the best here, Isolation Forest is the weakest, and
+the deep model does not beat linear baselines. SMD has no timestamps or incident ids, so hour-of-day baselines and
+grouping metrics do not apply, and its 38 columns are unnamed. Metrics are strict event-level (no point-adjustment),
+so they are not comparable to point-adjusted F1 scores quoted in papers. Do not tune on the test half.
+
 ## Known limitations / next steps
 
-1. **Synthetic-data risk:** you wrote the generator and the evaluation uses it. Add a public multivariate server
-   dataset (e.g. SMD) and report results there before making claims.
+1. **Synthetic results are optimistic.** The simulator was written by the same author as the detectors; SMD above is
+   the realistic picture. Next: windowed/LSTM models and better threshold strategies, tuned on validation data only.
 2. Isolation Forest sees weak temporal context; add more trend features or a windowed/LSTM autoencoder.
 3. Thresholds come from a quantile of normal validation scores (`THRESHOLD_QUANTILE` in `config.py`); tune on
    validation data, never on the test set.
@@ -90,7 +119,7 @@ and will differ on real data. Re-run `scripts/evaluate.py` for your own figures.
 ## Verified vs. not verified
 
 Run and passing on Windows (Python 3.11, pandas 3.1, scikit-learn 1.9, TensorFlow 2.21, SQLite): data generation,
-training, evaluation (results above reproduced on a second machine), the 13 unit/API tests, live ingestion through
+training, evaluation (results above reproduced on a second machine), the 16 unit/API tests, live ingestion through
 the API and the Streamlit dashboard (overview, anomaly timeline, incidents). The assistant is covered by an API test
 in extractive mode. CI runs the test suite on every push (Linux, Python 3.11, without TensorFlow).
 **Not run:** the Docker images / PostgreSQL path, `sbert` embeddings, and LLM mode.

@@ -58,3 +58,47 @@ def evaluate_run(feats: pd.DataFrame, incidents: list[dict]) -> dict:
         "alert_reduction_ratio": round(raw_alerts / n_pred, 2) if n_pred else None,
         "recall_by_type": {k: round(float(np.mean(v)), 2) for k, v in sorted(per_type.items())},
     }
+
+
+def event_counts(y_true, flags, tol: int = 5, min_consecutive: int | None = None,
+                 merge_gap: int | None = None, samples_per_day: float = 1440.0) -> dict:
+    """Event-level counts for ONE labelled series (e.g. one SMD machine; 1 sample = 1 minute).
+
+    Ground-truth events are runs of consecutive 1s. Predicted events are runs of flagged samples that persist
+    >= min_consecutive and are merged across gaps <= merge_gap. A true event is detected if any predicted event
+    overlaps it (+/- tol samples). Counts are returned (not ratios) so several series can be pooled.
+    """
+    from .config import MERGE_GAP, MIN_CONSECUTIVE
+    from .correlation import find_runs
+    min_consecutive = MIN_CONSECUTIVE if min_consecutive is None else min_consecutive
+    merge_gap = MERGE_GAP if merge_gap is None else merge_gap
+    y, f = np.asarray(y_true).astype(bool), np.asarray(flags).astype(bool)
+    gt, pred = find_runs(y, 1, 0), find_runs(f, min_consecutive, merge_gap)
+
+    def overlap(p, g):
+        return p[0] <= g[1] + tol and p[1] >= g[0] - tol
+
+    latencies, detected = [], 0
+    for g in gt:
+        hits = [p for p in pred if overlap(p, g)]
+        if hits:
+            detected += 1
+            first_alert = min(p[0] for p in hits) + min_consecutive - 1
+            latencies.append(max(0, first_alert - g[0]))
+    tp_pred = sum(any(overlap(p, g) for g in gt) for p in pred)
+    return {"n_gt": len(gt), "detected": detected, "n_pred": len(pred), "tp_pred": tp_pred,
+            "fp": len(pred) - tp_pred, "latencies": latencies, "days": len(y) / samples_per_day}
+
+
+def summarize_counts(counts: list[dict]) -> dict:
+    """Pool event counts over series: micro precision/recall/F1, false alerts per day, median latency."""
+    n_gt, det = sum(c["n_gt"] for c in counts), sum(c["detected"] for c in counts)
+    n_pred, tp = sum(c["n_pred"] for c in counts), sum(c["tp_pred"] for c in counts)
+    days = sum(c["days"] for c in counts)
+    lat = [v for c in counts for v in c["latencies"]]
+    p, r = (tp / n_pred if n_pred else 0.0), (det / n_gt if n_gt else 0.0)
+    return {"events_true": n_gt, "events_detected": det, "incidents_predicted": n_pred,
+            "event_precision": round(p, 3), "event_recall": round(r, 3),
+            "event_f1": round(2 * p * r / (p + r), 3) if p + r else 0.0,
+            "false_alerts_per_day": round((n_pred - tp) / max(days, 1e-9), 3),
+            "median_detection_latency_min": float(np.median(lat)) if lat else None}

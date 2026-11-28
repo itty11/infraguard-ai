@@ -18,6 +18,7 @@ CATEGORIES = {
     "network": {"latency", "packet_loss", "network_in", "network_out", "connection_failures"},
     "storage": {"disk_usage", "disk_io"},
 }
+JOINT_HYPOTHESIS = "Unusual combination of metrics (no single metric clearly abnormal) - low confidence"
 ACTIONS = {
     "Infrastructure performance degradation":
         "Review recent workload/deployment changes, then inspect server resource usage and network congestion or interface errors",
@@ -33,6 +34,9 @@ ACTIONS = {
         "Check disk growth, log rotation and I/O wait; identify the largest writers",
     "Application performance degradation without a clear resource cause":
         "Check recent deployments and slow dependencies (database, downstream APIs); compare with request rate",
+    JOINT_HYPOTHESIS:
+        "Treat as low confidence: compare the listed metrics with their normal range, check whether it persists, and "
+        "follow the general triage runbook before acting",
     "Unclassified anomaly":
         "Review the affected metrics against recent changes and consult the general triage runbook",
 }
@@ -127,12 +131,13 @@ def correlate(feats: pd.DataFrame, z: pd.DataFrame, model: str,
                 events[name] = f"{shape.capitalize()} {'increase' if sign > 0 else 'decrease'}"
             peak_ratio = float(sc[s:e + 1].max() / thr) if thr > 0 else 1.0
             duration = e - s + 1
-            hyp = _hypothesis(names, events)
+            hyp = JOINT_HYPOTHESIS if joint else _hypothesis(names, events)
             incidents.append({
                 "server_id": sid, "model": model,
                 "start": ts[s], "end": ts[e], "detected_at": ts[min(s + min_consecutive - 1, e)],
                 "duration_min": duration,
-                "severity": _severity(len(names), float(max_abs[idx].max()), duration),
+                # joint-pattern-only detections are low confidence by definition: never above LOW
+                "severity": "LOW" if joint else _severity(len(names), float(max_abs[idx].max()), duration),
                 "peak_abs_z": round(float(max_abs[idx].max()), 2),
                 "anomalous_metrics": names, "metric_events": events,
                 "peak_score": float(sc[s:e + 1].max()), "peak_ratio": round(peak_ratio, 3),

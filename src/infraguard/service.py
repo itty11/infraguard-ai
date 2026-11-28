@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from .config import BASE_METRICS, MERGE_GAP, WARMUP
-from .correlation import ACTIONS, _hypothesis
+from .correlation import ACTIONS, JOINT_HYPOTHESIS, _hypothesis
 from .db import Anomaly, Incident, Telemetry
 from .pipeline import DetectorBundle, detect
 
@@ -62,8 +62,12 @@ def process_server(session: Session, bundle: DetectorBundle, server_id: str) -> 
         metrics = list(dict.fromkeys([*(row.anomalous_metrics or []), *inc["anomalous_metrics"]]))
         row.anomalous_metrics = metrics                                   # new objects so SQLAlchemy sees the change
         row.metric_events = {**inc["metric_events"], **(row.metric_events or {})}
-        row.hypothesis = _hypothesis(metrics, row.metric_events)
-        row.recommended_action = ACTIONS[row.hypothesis]
+        if inc["hypothesis"] == JOINT_HYPOTHESIS:
+            # weak evidence: keep a firmer hypothesis if an earlier evaluation already produced one
+            row.hypothesis = row.hypothesis if row.hypothesis not in (None, JOINT_HYPOTHESIS) else JOINT_HYPOTHESIS
+        else:
+            row.hypothesis = _hypothesis(metrics, row.metric_events)
+        row.recommended_action = ACTIONS.get(row.hypothesis, ACTIONS["Unclassified anomaly"])
         row.peak_score = max(row.peak_score or 0.0, inc["peak_score"])
         row.peak_ratio = max(row.peak_ratio or 0.0, inc["peak_ratio"])
         row.duration_min = int((row.end - row.start).total_seconds() // 60) + 1

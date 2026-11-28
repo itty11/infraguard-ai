@@ -9,3 +9,6 @@ data/*.csv
 .venv/
 venv/
 .vscode/
+
+
+data/external/
